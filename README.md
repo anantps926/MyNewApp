@@ -62,6 +62,24 @@ If everything is set up correctly, you should see your new app running in the An
 
 This is one way to run your app — you can also build it directly from Android Studio or Xcode.
 
+## Streaming chat (SSE)
+
+The main UI is `screens/StreamingChat.jsx`. It uses **`fetch` + `ReadableStream`** with a **hand-written SSE parser** in `middleware/sseStream.js` (no third-party streaming libraries).
+
+- **Default:** `constants/chatConfig.js` has `useMock: true` — responses come from `middleware/MockStream.js`.
+- **Live API:** Set `useMock: false`, set `apiKey` and optionally `sseUrl` / `model` in `chatConfig.js`. The parser expects **OpenAI-style** chat completion streaming (`choices[0].delta.content`).
+
+**Behaviour**
+
+- Incoming tokens are accumulated in an **`incomingRef`** buffer; the UI **`bufferRef`** catches up at a capped rate so bursty SSE does not flash whole paragraphs at once.
+- **Stop** aborts the request and finalizes the assistant message (no ghost updates).
+- **Send** while a reply is streaming **aborts** the current request, **finalizes** the partial answer, then starts the new user message and stream (`streamGenerationRef` prevents a stale `finally` from clearing state).
+- **Auto-scroll** follows new content only while you are near the bottom; scrolling up disables follow until you scroll back down.
+
+Do not commit real API keys. Use a local override or your team’s secret management.
+
+SSE parsing is split into testable pure functions in `middleware/sseParse.js` (used by `middleware/sseStream.js`). Run `npm test` to execute parser unit tests.
+
 ## Step 3: Modify your app
 
 Now that you have successfully run the app, let's make changes!

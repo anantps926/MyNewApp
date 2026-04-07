@@ -15,13 +15,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../constants/theme';
-import { mockStreamResponse } from '../middleware/MockStream';
+import { CHAT_CONFIG } from '../constants/chatConfig';
+import { createChatStream } from '../middleware/chatStream';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-// message: { id: string, role: 'user' | 'assistant', text: string }
+/**
+ * @typedef {{ id: string, role: 'user' | 'assistant', text: string }} ChatMessage
+ */
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const FLUSH_INTERVAL_MS = 32; // ~30fps state updates
+/** Display catches up to network buffer at this rate (smooths bursty SSE). */
+const SMOOTH_CHARS_PER_TICK = 3;
+const FLUSH_INTERVAL_MS = 16;
+const SCROLL_BOTTOM_THRESHOLD = 88;
 const CURSOR = '▍';
 const EMPTY_STREAM_PLACEHOLDER = '[No response received]';
 
@@ -43,6 +49,9 @@ export default function StreamingChat () {
   /** Which assistant bubble is active — state so list rows re-render reliably. */
   const [streamingMessageId, setStreamingMessageId] = useState(null);
 
+  /** Full text received from the stream (network buffer). */
+  const incomingRef = useRef('');
+  /** Prefix of `incomingRef` shown in the UI (smoothly catches up). */
   const bufferRef = useRef('');
   /** Index of the assistant message in `messages` for O(1) flush patches. */
   const streamingIndexRef = useRef(null);
@@ -50,6 +59,20 @@ export default function StreamingChat () {
   const flushIntervalRef = useRef(null);
   const mountedRef = useRef(true);
   const flatListRef = useRef(null);
+  /** When true, new content triggers auto-scroll; false if user scrolled up. */
+  const scrollFollowRef = useRef(true);
+  /** Monotonic id so an old request's `finally` cannot finalize a newer stream. */
+  const streamGenerationRef = useRef(0);
+
+  const scrollToEndIfFollowing = useCallback(() => {
+    if (!scrollFollowRef.current || !mountedRef.current) return;
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        if (!mountedRef.current) return;
+        flatListRef.current?.scrollToEnd({ animated: true });
+      });
+    });
+  }, []);
 
   const stopFlush = useCallback(() => {
     if (flushIntervalRef.current) {
@@ -64,14 +87,27 @@ export default function StreamingChat () {
       if (!mountedRef.current) return;
       const idx = streamingIndexRef.current;
       if (idx == null) return;
-      const buffered = bufferRef.current;
-      setMessages((prev) => patchMessageAtIndex(prev, idx, buffered));
+
+      const full = incomingRef.current;
+      let shown = bufferRef.current;
+      if (shown.length < full.length) {
+        const take = Math.min(
+          SMOOTH_CHARS_PER_TICK,
+          full.length - shown.length
+        );
+        bufferRef.current += full.slice(shown.length, shown.length + take);
+        shown = bufferRef.current;
+      }
+
+      setMessages((prev) => patchMessageAtIndex(prev, idx, shown));
+      scrollToEndIfFollowing();
     }, FLUSH_INTERVAL_MS);
-  }, [stopFlush]);
+  }, [stopFlush, scrollToEndIfFollowing]);
 
   const finalizeStream = useCallback(() => {
     stopFlush();
 
+    bufferRef.current = incomingRef.current;
     const finalText = bufferRef.current;
     const idx = streamingIndexRef.current;
     const alive = mountedRef.current;
@@ -80,6 +116,7 @@ export default function StreamingChat () {
       setMessages((prev) => patchMessageAtIndex(prev, idx, finalText));
     }
 
+    incomingRef.current = '';
     bufferRef.current = '';
     streamingIndexRef.current = null;
 
@@ -99,7 +136,12 @@ export default function StreamingChat () {
 
   const send = useCallback(async () => {
     const prompt = input.trim();
-    if (!prompt || phase !== 'idle') return;
+    if (!prompt) return;
+
+    abortRef.current?.abort();
+    finalizeStream();
+
+    const myGeneration = ++streamGenerationRef.current;
 
     Keyboard.dismiss();
     setInput('');
@@ -115,47 +157,45 @@ export default function StreamingChat () {
     });
     setStreamingMessageId(assistantId);
     setPhase('thinking');
+    scrollFollowRef.current = true;
+    scrollToEndIfFollowing();
 
-    InteractionManager.runAfterInteractions(() => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (!mountedRef.current) return;
-          flatListRef.current?.scrollToEnd({ animated: true });
-        });
-      });
-    });
-
+    incomingRef.current = '';
     bufferRef.current = '';
     abortRef.current = new AbortController();
 
     let firstChunk = true;
     try {
-      const stream = mockStreamResponse(prompt, { signal: abortRef.current.signal });
+      const stream = createChatStream(prompt, {
+        signal: abortRef.current.signal,
+      });
 
       for await (const chunk of stream) {
+        if (streamGenerationRef.current !== myGeneration) return;
         if (firstChunk) {
           firstChunk = false;
           setPhase('streaming');
           startFlush();
         }
-        bufferRef.current += chunk;
+        incomingRef.current += chunk;
       }
     } catch (err) {
+      if (streamGenerationRef.current !== myGeneration) return;
       if (err?.name !== 'AbortError') {
-        bufferRef.current += '\n\n[Error: stream failed]';
+        incomingRef.current += `\n\n[Error: ${err?.message ?? 'stream failed'}]`;
       }
     } finally {
+      if (streamGenerationRef.current !== myGeneration) return;
+
+      bufferRef.current = incomingRef.current;
       const aborted = abortRef.current?.signal.aborted ?? false;
-      if (
-        firstChunk &&
-        !aborted &&
-        bufferRef.current.trim() === ''
-      ) {
-        bufferRef.current = EMPTY_STREAM_PLACEHOLDER;
+      if (firstChunk && !aborted && incomingRef.current.trim() === '') {
+        incomingRef.current = EMPTY_STREAM_PLACEHOLDER;
+        bufferRef.current = incomingRef.current;
       }
       finalizeStream();
     }
-  }, [input, phase, startFlush, finalizeStream]);
+  }, [input, startFlush, finalizeStream, scrollToEndIfFollowing]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -197,6 +237,17 @@ export default function StreamingChat () {
           keyboardShouldPersistTaps="handled"
           renderItem={renderMessage}
           ListEmptyComponent={<EmptyState />}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } =
+              e.nativeEvent;
+            const dist =
+              contentSize.height -
+              layoutMeasurement.height -
+              contentOffset.y;
+            scrollFollowRef.current = dist < SCROLL_BOTTOM_THRESHOLD;
+          }}
+          scrollEventThrottle={16}
+          onContentSizeChange={scrollToEndIfFollowing}
         />
 
         <InputBar
@@ -212,10 +263,13 @@ export default function StreamingChat () {
 }
 
 function ChatHeader () {
+  const mode = CHAT_CONFIG.useMock ? 'Mock stream' : 'Live SSE';
   return (
     <View style={styles.header}>
       <Text style={styles.headerTitle}>Chat</Text>
-      <Text style={styles.headerSubtitle}>Streaming assistant</Text>
+      <Text style={styles.headerSubtitle}>
+        {mode} · Streaming assistant
+      </Text>
     </View>
   );
 }
@@ -325,8 +379,8 @@ function EmptyState () {
 
 // ─── InputBar ─────────────────────────────────────────────────────────────────
 function InputBar ({ value, onChange, onSend, onStop, phase }) {
-  const isIdle = phase === 'idle';
   const isActive = phase === 'thinking' || phase === 'streaming';
+  const canSend = Boolean(value.trim());
 
   return (
     <View style={styles.inputBar}>
@@ -338,21 +392,34 @@ function InputBar ({ value, onChange, onSend, onStop, phase }) {
         placeholderTextColor={theme.textMuted}
         multiline
         maxLength={2000}
-        editable={isIdle}
+        editable
         returnKeyType="send"
         onSubmitEditing={onSend}
         blurOnSubmit
       />
       {isActive ? (
-        <TouchableOpacity
-          style={styles.stopBtn}
-          onPress={onStop}
-          activeOpacity={0.7}
-          accessibilityLabel="Stop generating"
-          accessibilityRole="button"
-        >
-          <View style={styles.stopIcon} />
-        </TouchableOpacity>
+        <View style={styles.inputActions}>
+          {canSend ? (
+            <TouchableOpacity
+              style={styles.sendBtn}
+              onPress={onSend}
+              activeOpacity={0.7}
+              accessibilityLabel="Send new message and stop current reply"
+              accessibilityRole="button"
+            >
+              <Text style={styles.sendBtnText}>↑</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            style={styles.stopBtn}
+            onPress={onStop}
+            activeOpacity={0.7}
+            accessibilityLabel="Stop generating"
+            accessibilityRole="button"
+          >
+            <View style={styles.stopIcon} />
+          </TouchableOpacity>
+        </View>
       ) : (
         <TouchableOpacity
           style={[styles.sendBtn, !value.trim() && styles.sendBtnDisabled]}
@@ -371,6 +438,7 @@ function InputBar ({ value, onChange, onSend, onStop, phase }) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function uid () {
+  // eslint-disable-next-line no-undef -- Hermes / RN runtime
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === 'function') {
     return c.randomUUID();
@@ -551,6 +619,11 @@ const styles = StyleSheet.create({
     borderTopColor: theme.borderStrong,
     backgroundColor: theme.bgElevated,
     gap: 10,
+  },
+  inputActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   input: {
     flex: 1,
