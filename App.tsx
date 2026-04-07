@@ -6,11 +6,13 @@
  */
 
 import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+import { Button, StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
+
+import StreamingChat from "./screens/StreamingChat"
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -18,7 +20,10 @@ function App() {
   return (
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
+      <StreamingChat />
+      {/* <View style={{ justifyContent: "center", alignItems: "center", flex: 1 }}>
+        <Button title='Click Me' onPress={() => {}} />
+      </View> */}
     </SafeAreaProvider>
   );
 }
