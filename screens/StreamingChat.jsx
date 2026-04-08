@@ -267,9 +267,7 @@ function ChatHeader () {
   return (
     <View style={styles.header}>
       <Text style={styles.headerTitle}>Chat</Text>
-      <Text style={styles.headerSubtitle}>
-        {mode} · Streaming assistant
-      </Text>
+      <Text style={styles.headerSubtitle}>{mode} · Streaming assistant</Text>
     </View>
   );
 }
@@ -475,7 +473,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.textMuted,
   },
-
   list: {
     paddingHorizontal: 16,
     paddingTop: 16,

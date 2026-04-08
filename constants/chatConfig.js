@@ -1,17 +1,17 @@
+import Config from 'react-native-config';
+
 /**
  * Chat streaming configuration.
- * Use plain functions (not methods on a config object) so `this` never breaks
- * when passing references around.
- *
- * Never commit real API keys — use env injection in CI or local overrides.
+ * GROQ_API_KEY is read from .env via react-native-config.
  */
 export const CHAT_CONFIG = {
   /** When true, uses middleware/MockStream.js (no network). */
-  useMock: true,
+  useMock: false,
 
-  sseUrl: 'https://api.openai.com/v1/chat/completions',
-  apiKey: '',
-  model: 'gpt-4o-mini',
+  /** Groq OpenAI-compatible chat completions endpoint. */
+  sseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+  apiKey: Config.GROQ_API_KEY || '',
+  model: 'openai/gpt-oss-120b',
 };
 
 export function buildChatRequestBody (userMessage) {
@@ -22,13 +22,13 @@ export function buildChatRequestBody (userMessage) {
   };
 }
 
-export function buildChatHeaders () {
+export function buildChatHeaders (apiKey) {
   const h = {
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
   };
-  if (CHAT_CONFIG.apiKey) {
-    h.Authorization = `Bearer ${CHAT_CONFIG.apiKey}`;
+  if (apiKey) {
+    h.Authorization = `Bearer ${apiKey}`;
   }
   return h;
 }

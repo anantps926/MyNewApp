@@ -67,7 +67,7 @@ This is one way to run your app — you can also build it directly from Android 
 The main UI is `screens/StreamingChat.jsx`. It uses **`fetch` + `ReadableStream`** with a **hand-written SSE parser** in `middleware/sseStream.js` (no third-party streaming libraries).
 
 - **Default:** `constants/chatConfig.js` has `useMock: true` — responses come from `middleware/MockStream.js`.
-- **Live API:** Set `useMock: false`, set `apiKey` and optionally `sseUrl` / `model` in `chatConfig.js`. The parser expects **OpenAI-style** chat completion streaming (`choices[0].delta.content`).
+- **Live API:** Set `useMock: false`, add `GROQ_API_KEY` in `.env`, and optionally change `sseUrl` / `model` in `chatConfig.js`. The parser expects **OpenAI-style** chat completion streaming (`choices[0].delta.content`).
 
 **Behaviour**
 
@@ -77,6 +77,17 @@ The main UI is `screens/StreamingChat.jsx`. It uses **`fetch` + `ReadableStream`
 - **Auto-scroll** follows new content only while you are near the bottom; scrolling up disables follow until you scroll back down.
 
 Do not commit real API keys. Use a local override or your team’s secret management.
+
+Environment setup:
+
+- Create `.env` in project root (or copy from `.env.example`)
+- Add:
+  - `GROQ_API_KEY=your_groq_api_key`
+- Rebuild app after env changes:
+  - Android: `npm run android`
+  - iOS: `cd ios && bundle exec pod install && cd .. && npm run ios`
+
+For production apps, do not ship provider secrets in the client. Prefer a backend relay/token exchange.
 
 SSE parsing is split into testable pure functions in `middleware/sseParse.js` (used by `middleware/sseStream.js`). Run `npm test` to execute parser unit tests.
 

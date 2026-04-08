@@ -19,11 +19,11 @@ export async function* createChatStream (prompt, { signal } = {}) {
   }
 
   if (!CHAT_CONFIG.apiKey) {
-    throw new Error('Set CHAT_CONFIG.apiKey (or enable useMock) before streaming.');
+    throw new Error('Missing GROQ_API_KEY in .env (or enable useMock).');
   }
 
   const body = JSON.stringify(buildChatRequestBody(prompt));
-  const headers = buildChatHeaders();
+  const headers = buildChatHeaders(CHAT_CONFIG.apiKey);
 
   yield* streamSSE(CHAT_CONFIG.sseUrl, { body, headers, signal });
 }
